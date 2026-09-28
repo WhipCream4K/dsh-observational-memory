@@ -7,6 +7,26 @@ import {
   type SettingsScopeLike,
 } from '../src/client/controller.ts'
 
+/** Apply a path-addressed set the way the Host settings document does. */
+function applySet(target: Record<string, unknown>, path: string[], value: unknown): void {
+  let node = target
+  for (const key of path.slice(0, -1)) {
+    if (node[key] === null || typeof node[key] !== 'object') node[key] = {}
+    node = node[key] as Record<string, unknown>
+  }
+  node[path[path.length - 1]] = value
+}
+
+/** Apply a path-addressed unset. */
+function applyUnset(target: Record<string, unknown>, path: string[]): void {
+  let node = target
+  for (const key of path.slice(0, -1)) {
+    if (node[key] === null || typeof node[key] !== 'object') return
+    node = node[key] as Record<string, unknown>
+  }
+  delete node[path[path.length - 1]]
+}
+
 /** In-memory settings scope mirroring the client contract's semantics. */
 function fakeScope(initial: { value?: Record<string, unknown>; user?: Record<string, unknown>; base?: Record<string, unknown> }) {
   let user: Record<string, unknown> = { ...(initial.user ?? {}) }
@@ -25,15 +45,15 @@ function fakeScope(initial: { value?: Record<string, unknown>; user?: Record<str
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    set: async (field, value) => {
-      user = { ...user, [field]: value }
-      for (const listener of [...listeners]) listener()
-    },
-    unset: async (field) => {
+    mutate: async (ops) => {
       const next = { ...user }
-      delete next[field]
+      for (const op of ops) {
+        if (op.op === 'set') applySet(next, op.path, op.value)
+        else applyUnset(next, op.path)
+      }
       user = next
       for (const listener of [...listeners]) listener()
+      return true
     },
   }
   return scope

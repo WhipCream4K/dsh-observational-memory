@@ -9,7 +9,7 @@
  * summarizer keeps working until memory exists.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Message, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { Message, RequestMessage, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 // Type-only: merges the compaction/* session event types into SessionEventMap.
 import type {} from '@deepseek-ai/dsh-compaction'
@@ -36,10 +36,11 @@ type PendingVisible = {
  *
  * The summarization request replays the shadowed region verbatim (plus a
  * trailing instruction message the engine mints fresh), so the cut is the
- * last request message whose id exists in the session log. Falls back to the
- * log tip when no request message matches (unusual — e.g. a custom engine).
+ * last request message whose id exists in the session log. Request messages
+ * minted for one call carry no durable id, so they are skipped. Falls back to
+ * the log tip when no request message matches (unusual — e.g. a custom engine).
  */
-function compactionCutSeq(session: Session, messages: readonly Message[]): number {
+function compactionCutSeq(session: Session, messages: readonly RequestMessage[]): number {
   const seqByMessageId = new Map<string, number>()
   for (const event of session.snapshotEvents()) {
     const data = event.data as { message?: { id?: unknown } } | undefined
@@ -50,7 +51,9 @@ function compactionCutSeq(session: Session, messages: readonly Message[]): numbe
     if (typeof messageId === 'string') seqByMessageId.set(messageId, event.seq)
   }
   for (let i = messages.length - 1; i >= 0; i--) {
-    const seq = seqByMessageId.get(messages[i].id)
+    const id = messages[i].id
+    if (typeof id !== 'string') continue
+    const seq = seqByMessageId.get(id)
     if (seq !== undefined) return seq
   }
   return Math.max(0, session.seq - 1)

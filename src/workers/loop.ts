@@ -14,13 +14,23 @@ import {
   createAssistantMessage,
   createToolResultMessage,
   createUserMessage,
+  type ContextFormed,
   type FinishReason,
   type Message,
   type ToolCallBlock,
   type ToolSchema,
 } from '@deepseek-ai/dsh-llm'
 
-export const WORKER_PLUGIN_NAME = 'dsh-observational-memory'
+/** Message-source kind this plugin stamps on the prompts it mints. */
+export const WORKER_SOURCE_KIND = 'observational-memory'
+
+// The message source vocabulary is producer-owned: there is no catch-all
+// `plugin` kind (removed in DSH 0.1.7), so the worker prompt declares its own.
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'observational-memory': { kind: 'observational-memory' } & ContextFormed
+  }
+}
 
 /** Thrown when a worker's model stream ends in error/aborted/max-tokens. */
 export class WorkerStreamError extends Error {
@@ -73,7 +83,7 @@ export async function runWorkerLoop(ctx: Context, options: WorkerLoopOptions): P
   const messages: Message[] = [
     createUserMessage({
       content: [{ type: 'text', text: options.userText }],
-      source: { kind: 'plugin', plugin: WORKER_PLUGIN_NAME },
+      source: { kind: WORKER_SOURCE_KIND },
     }),
   ]
   const tools: ToolSchema[] = options.tools.map((tool) => tool.schema)

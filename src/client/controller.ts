@@ -13,7 +13,17 @@
  * and revision fencing through the bound settings scope.
  */
 
-/** The slice of the settings scope contract this form consumes. */
+/**
+ * One path-addressed edit inside the settings section. DSH 0.1.7's form
+ * writes are ordered atomic mutations over paths, so a dotted field name has
+ * to travel as path segments (`model.provider` → `['model', 'provider']`)
+ * rather than as one literal key.
+ */
+export type SettingsPathOp =
+  | { op: 'set'; path: string[]; value: unknown }
+  | { op: 'unset'; path: string[] }
+
+/** The slice of the settings form contract this form consumes. */
 export interface SettingsScopeLike {
   getSnapshot(): {
     status: 'loading' | 'ready' | 'unavailable'
@@ -24,8 +34,8 @@ export interface SettingsScopeLike {
     writable: boolean
   }
   subscribe(listener: () => void): () => void
-  set(field: string, value: unknown): Promise<void>
-  unset(field: string): Promise<void>
+  /** Queue one atomic mutation; resolves whether the Host accepted it. */
+  mutate(ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<boolean>
 }
 
 /** Minimal snapshot store the slot renderer binds as a selector hook. */
@@ -251,6 +261,8 @@ export class OmCardController {
   /** Bumps on every issued catalog request so a late response never wins. */
   private catalogGeneration = 0
   private readonly store: SnapshotStoreLike<OmCardState>
+  /** Detaches this controller from the settings form it derives from. */
+  private readonly unsubscribe: () => void
 
   constructor(
     private readonly scope: SettingsScopeLike,
@@ -259,10 +271,15 @@ export class OmCardController {
   ) {
     for (const field of fields) this.specs.set(field.key, field)
     this.store = createStore(this.projection())
-    scope.subscribe(() => this.publish())
+    this.unsubscribe = scope.subscribe(() => this.publish())
     // The model dropdowns need the Host catalog; fetch it once up front so
     // expanding the card never waits on the wire.
     if (rpc !== undefined) void this.loadCatalog()
+  }
+
+  /** Drop the form subscription; the shared form outlives this controller. */
+  dispose(): void {
+    this.unsubscribe()
   }
 
   inject(): OmCardFace {
@@ -475,13 +492,19 @@ export class OmCardController {
 
     if (writes.length === 0 && clears.length === 0) return
 
+    // One ordered mutation: clears first (a cleared field re-inherits the
+    // composition layer), then the writes, all under one revision fence.
+    const ops: SettingsPathOp[] = [
+      ...clears.map((key): SettingsPathOp => ({ op: 'unset', path: key.split('.') })),
+      ...writes.map((write): SettingsPathOp => ({ op: 'set', path: write.field.split('.'), value: write.value })),
+    ]
+
     this.saving = true
     this.failed = false
     this.publish()
     let landed = true
     try {
-      for (const key of clears) await this.scope.unset(key)
-      for (const write of writes) await this.scope.set(write.field, write.value)
+      await this.scope.mutate(ops)
       // The Host is the only authority on acceptance: re-read the user layer.
       const user = this.scope.getSnapshot().user
       for (const key of clears) {

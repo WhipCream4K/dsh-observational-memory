@@ -9,7 +9,9 @@ import {
 
 describe('Config schema', () => {
   it('resolves defaults for an empty composition entry', () => {
-    const config = Config({})
+    // Config() now parses volatile fields into Loader-owned references;
+    // resolveConfig is the plain resolved shape the runtime consumes.
+    const config = resolveConfig({})
     expect(config.observeAfterTokens).toBe(10_000)
     expect(config.reflectAfterTokens).toBe(20_000)
     expect(config.compactAfterTokens).toBe(0)
@@ -23,7 +25,7 @@ describe('Config schema', () => {
   })
 
   it('keeps user values', () => {
-    const config = Config({ observeAfterTokens: 5000, passive: true, model: { provider: 'p', id: 'm' } })
+    const config = resolveConfig({ observeAfterTokens: 5000, passive: true, model: { provider: 'p', id: 'm' } })
     expect(config.observeAfterTokens).toBe(5000)
     expect(config.passive).toBe(true)
     expect(config.model).toEqual({ provider: 'p', id: 'm' })

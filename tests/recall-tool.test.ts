@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { Config } from '../src/config.ts'
+import { Config, resolveConfig } from '../src/config.ts'
 import { registerRecallTool } from '../src/tools/recall.ts'
 import { OmRuntime } from '../src/runtime.ts'
 import { makeObservation, makeReflection, resetSeqs, userEvent } from './fixtures.ts'
@@ -20,7 +20,7 @@ afterEach(async () => {
 })
 
 async function setup() {
-  const runtime = new OmRuntime(Config({ storageDir: dir }), { onError: () => {} })
+  const runtime = new OmRuntime(resolveConfig({ storageDir: dir }), { onError: () => {} })
   let tool: ToolDefinition | undefined
   const ctx = {
     tools: {

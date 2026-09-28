@@ -20,7 +20,7 @@ This plugin moves the memory work **earlier**, into the session itself, instead 
 - **The recall tool**: the model can recover the exact source evidence (timestamped original text) behind any memory id.
 - **The Memory tab**: a new conversation view tab showing the memory inventory, worker progress, memory content (visible / full), and debug logs, rendered live by the host.
 - **The rollback button**: every user message gains a rollback action that forks the session right before it and restores the text into the composer.
-- **Bilingual settings card**: the Observational Memory card under Settings → Plugins → Plugin configuration speaks 中文/English, and the model override is picked from the models added to DSH via cascading provider → model → reasoning-effort dropdowns.
+- **Bilingual settings card**: the Observational Memory configuration on the plugin's page under **Plugins** speaks 中文/English, and the model override is picked from the models added to DSH via cascading provider → model → reasoning-effort dropdowns.
 
 ## Core concepts
 
@@ -57,7 +57,7 @@ Differences from the Pi version (platform adaptations):
 
 ## Install
 
-Requires deepseek-harness **0.1.5-rc.2** (`@deepseek-ai/dsh-*` packages ≥ 0.1.5-rc.2).
+Requires deepseek-harness **0.1.7-rc.2** (`@deepseek-ai/dsh-*` packages ≥ 0.1.7-rc.2). 0.1.7 replaced the client settings API this plugin used before (`settingsScope` → `configForms`, `settings.plugin.item` → `plugins.bundle.config`) and moved the host-side page policy to `settings.configure({ auto: false })`; earlier releases are not interchangeable.
 
 Add the plugin to a profile through the DSH CLI (`web` shown here; substitute as needed). The package ships a `cordis.patch.yml`, so the composer mounts the host half automatically and serves `/plugins/dsh-observational-memory/client.js` to the Web client — no extra composition wiring.
 
@@ -100,7 +100,7 @@ Restart DSH Web afterwards. Verify the mount: `dsh --profile web --dump-config |
 
 ### The settings card
 
-Open **Settings → Plugins → Plugin configuration** and expand the **Observational Memory** card at the very bottom; edits apply live on **Save** — no restart. The card is bilingual (中文/English) and follows the DSH language setting.
+Open the **Plugins** page (the global panel beside the sidebar), open the **dsh-observational-memory** bundle, and expand its configuration section; edits apply live on **Save** — no restart. The card is bilingual (中文/English) and follows the DSH language setting.
 
 - **Thresholds**: the compaction-threshold mode decides which single threshold parameter is shown — `calibrated` shows the static threshold, `ratio` shows the window ratio. Only the shown parameter is effective; the hidden one is inert however it is set.
 - **Model (optional)**: cascading provider → model ID → reasoning-effort dropdowns fed by the models added to DSH; a downstream dropdown stays empty until its upstream pick is made. Leave everything blank to let memory workers follow the session model.
@@ -132,10 +132,10 @@ DSH can only cut sessions at turn boundaries, so the button stays disabled (with
 
 ## Configuration
 
-Configuration lives in its own `observational-memory` namespace of the DSH user settings document (default `$DSH_HOME/settings.yaml`) — never in the harness's own composition. Two ways to edit:
+Configuration lives in the `observational-memory` entry of the active profile's patch (`$DSH_HOME/profiles/<profile>/cordis.patch.yml`), layered over the bundle's own defaults — never in the harness's own composition. Two ways to edit:
 
 1. **UI**: see "The settings card" above.
-2. **File**: edit the `observational-memory:` section of `$DSH_HOME/settings.yaml` by hand.
+2. **File**: edit the `observational-memory` entry's `config:` in that profile patch by hand. A `settings.yaml` left over from a pre-0.1.7 release is imported into the profile once and then kept as `settings.yaml.imported`.
 
 ### Settings
 

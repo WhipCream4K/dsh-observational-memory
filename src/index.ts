@@ -17,7 +17,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-session'
-import { Config, SETTINGS_NAMESPACE } from './config.ts'
+import { Config, SETTINGS_NAMESPACE, readConfig, type ConfigRefs } from './config.ts'
 import { OmRuntime } from './runtime.ts'
 import { OmApiService } from './api.ts'
 import { registerCompactionHook } from './hooks/compaction.ts'
@@ -31,23 +31,23 @@ export const inject = ['llm', 'tools', 'sessions', 'agents']
 export { Config, SETTINGS_NAMESPACE }
 export type { Config as ConfigShape } from './config.ts'
 
-export function apply(ctx: Context, config: Config): void {
-  const runtime = new OmRuntime(config, {
+export function apply(ctx: Context, config: ConfigRefs): void {
+  // Every field is a volatile reference the Loader keeps current, so the
+  // runtime reads the live values on each access: a settings-page edit lands
+  // without remounting this plugin, and there is nothing to install here.
+  const runtime = new OmRuntime(() => readConfig(config), {
     onError: (message) => ctx.logger.warn(message),
   })
 
-  // Settings section: the composition entry is the base layer; user edits in
-  // the settings document apply live on top of it.
-  let source: () => Config = () => config
+  // This plugin ships its own configuration page (Settings → Plugins), so the
+  // entry must not also get a schema-generated page. DSH 0.1.7 replaced the
+  // old settings.installSection hook with Loader-owned volatile config plus
+  // this page-policy registration.
   ctx.inject(['settings'], (settingsCtx) => {
-    settingsCtx.settings.installSection(ctx, SETTINGS_NAMESPACE, Config, config, {
-      setSource: (current) => {
-        source = current
-      },
-      onChange: () => {
-        runtime.setConfig(source())
-      },
-    })
+    settingsCtx.effect(
+      () => settingsCtx.settings.configure({ auto: false }, ctx.fiber),
+      'observational-memory: settings page policy',
+    )
   })
 
   registerConsolidationTrigger(ctx, runtime)

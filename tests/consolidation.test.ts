@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { Config } from '../src/config.ts'
+import { Config, resolveConfig } from '../src/config.ts'
 import { maybeLaunchConsolidation, runConsolidationNow } from '../src/hooks/consolidation.ts'
 import { buildObservationsRecorded, buildReflectionsRecorded } from '../src/ledger/index.ts'
 import type { EventView } from '../src/serialize.ts'
@@ -75,7 +75,7 @@ describe('consolidation pipeline', () => {
       },
       { text: 'done' },
     ])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
       onError: () => {},
     })
 
@@ -91,7 +91,7 @@ describe('consolidation pipeline', () => {
   it('does nothing in passive mode', async () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx([{ text: 'unused' }])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, passive: true, storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, passive: true, storageDir: dir }), { onError: () => {} })
 
     await maybeLaunchConsolidation(ctx, runtime, fakeSession(events))
     expect(callCount()).toBe(0)
@@ -141,7 +141,7 @@ describe('consolidation pipeline', () => {
       { text: 'dropped' },
     ])
     const runtime = new OmRuntime(
-      Config({
+      resolveConfig({
         observeAfterTokens: 10,
         reflectAfterTokens: 10,
         observationsPoolMaxTokens: 100,
@@ -166,7 +166,7 @@ describe('consolidation pipeline', () => {
   it('backs off after a deliberate empty observer run', async () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx([{ text: 'nothing worth recording' }])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
       onError: () => {},
     })
     const session = fakeSession(events)
@@ -183,7 +183,7 @@ describe('consolidation pipeline', () => {
   it('keeps the pipeline alive when a worker stream fails', async () => {
     const events = longConversation(20)
     const { ctx, warnings } = fakeCtx([{ finish: 'error' }])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
       onError: () => {},
     })
 
@@ -195,7 +195,7 @@ describe('consolidation pipeline', () => {
   it('warns on consecutive empty observer runs', async () => {
     const events = longConversation(20)
     const { ctx, warnings, infos } = fakeCtx([{ text: 'nothing worth recording' }])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
       onError: () => {},
     })
 
@@ -215,7 +215,7 @@ describe('consolidation pipeline', () => {
     const events = longConversation(20)
     const { ctx, warnings } = fakeCtx([{ finish: 'error' }])
     const runtime = new OmRuntime(
-      Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, debugLog: true, storageDir: dir }),
+      resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, debugLog: true, storageDir: dir }),
       { onError: () => {} },
     )
     const session = fakeSession(events)
@@ -275,7 +275,7 @@ describe('consolidation pipeline', () => {
     ])
     const errors: string[] = []
     const runtime = new OmRuntime(
-      Config({
+      resolveConfig({
         observeAfterTokens: 10,
         reflectAfterTokens: 100_000,
         model: { provider: 'ov', id: 'broken' },
@@ -303,7 +303,7 @@ describe('consolidation pipeline', () => {
     const events = longConversation(20)
     const { ctx, requests } = fakeCtx([{ finish: 'error' }])
     const runtime = new OmRuntime(
-      Config({
+      resolveConfig({
         observeAfterTokens: 10,
         reflectAfterTokens: 100_000,
         model: { provider: 'ov', id: 'broken' },
@@ -350,7 +350,7 @@ describe('consolidation pipeline', () => {
       { text: 'done' },
     ])
     const runtime = new OmRuntime(
-      Config({
+      resolveConfig({
         observeAfterTokens: 10,
         reflectAfterTokens: 100_000,
         model: { provider: 'ov', id: 'flaky' },
@@ -413,7 +413,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx(observerTurns)
     const runtime = new OmRuntime(
-      Config({ passive: true, observeAfterTokens: 1_000_000, reflectAfterTokens: 1_000_000, storageDir: dir }),
+      resolveConfig({ passive: true, observeAfterTokens: 1_000_000, reflectAfterTokens: 1_000_000, storageDir: dir }),
       { onError: () => {} },
     )
 
@@ -429,7 +429,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
   it('returns false while a run is already in flight', async () => {
     const events = longConversation(20)
     const { ctx } = fakeCtx(observerTurns)
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
     const session = fakeSession(events)
 
     // The slot is claimed synchronously, before the pipeline's first await.
@@ -442,7 +442,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
 
   it('makes no model call over an empty backlog', async () => {
     const { ctx, callCount } = fakeCtx(observerTurns)
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
 
     await expect(runConsolidationNow(ctx, runtime, fakeSession([]))).resolves.toBe(true)
     expect(callCount()).toBe(0)
@@ -452,7 +452,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
   it('spends no model call when memory is already up to date', async () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx(observerTurns)
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
     // Ledger fully covering the session: nothing new for either stage.
     const observations = buildObservationsRecorded(
       [{ id: hashId('covered fact'), content: 'covered fact', timestamp: '2026-01-15 14:30', relevance: 'medium', sourceEventSeqs: [0], tokenCount: 10 }],
@@ -474,7 +474,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
   it('is the explicit retry that bypasses the deliberate-empty backoff', async () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx([{ text: 'nothing worth recording' }])
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, reflectAfterTokens: 100_000, storageDir: dir }), {
       onError: () => {},
     })
     const session = fakeSession(events)
@@ -492,7 +492,7 @@ describe('manual consolidation run (Memory tab "run now")', () => {
   it('refuses subagent sessions, which have no memory of their own', async () => {
     const events = longConversation(20)
     const { ctx, callCount } = fakeCtx(observerTurns)
-    const runtime = new OmRuntime(Config({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ observeAfterTokens: 10, storageDir: dir }), { onError: () => {} })
     const subagent = Object.assign(fakeSession(events), { header: { origin: 'subagent' as const } })
 
     await expect(runConsolidationNow(ctx, runtime, subagent)).resolves.toBe(false)

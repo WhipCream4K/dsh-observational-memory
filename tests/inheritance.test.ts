@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { Context } from '@deepseek-ai/cordis'
-import { Config } from '../src/config.ts'
+import { Config, resolveConfig } from '../src/config.ts'
 import { maybeLaunchConsolidation } from '../src/hooks/consolidation.ts'
 import {
   buildObservationsRecorded,
@@ -27,7 +27,7 @@ afterEach(async () => {
 })
 
 function makeRuntime(config: Record<string, unknown> = {}): OmRuntime {
-  return new OmRuntime(Config({ storageDir: dir, ...config }), { onError: () => {} })
+  return new OmRuntime(resolveConfig({ storageDir: dir, ...config }), { onError: () => {} })
 }
 
 /** A session stub carrying the fork-lineage fields inheritance reads. */

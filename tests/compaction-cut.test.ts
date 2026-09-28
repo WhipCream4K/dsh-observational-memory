@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { Config } from '../src/config.ts'
+import { Config, resolveConfig } from '../src/config.ts'
 import { registerCompactionHook } from '../src/hooks/compaction.ts'
 import { OmRuntime } from '../src/runtime.ts'
 import { makeObservation, makeReflection } from './fixtures.ts'
@@ -74,7 +74,7 @@ describe('compaction cut anchoring', () => {
       userMessageEvent(3, 'm4', 'retained four'),
     ]
     const { ctx, listeners } = fakeCtx(events)
-    const runtime = new OmRuntime(Config({ storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir }), { onError: () => {} })
 
     const shadowedObs = makeObservation({ content: 'about the shadowed region', sourceEventSeqs: [1] })
     const retainedObs = makeObservation({ content: 'about the retained tail', sourceEventSeqs: [3] })
@@ -116,7 +116,7 @@ describe('compaction cut anchoring', () => {
   it('falls back to the log tip when no request message matches', async () => {
     const events = [userMessageEvent(0, 'm1', 'one')]
     const { ctx, listeners } = fakeCtx(events)
-    const runtime = new OmRuntime(Config({ storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir }), { onError: () => {} })
     const observation = makeObservation({ content: 'tip observation', sourceEventSeqs: [0] })
     await runtime.store.append('s1', { kind: 'observations-recorded', observations: [observation], coversUpToSeq: 0 })
     registerCompactionHook(ctx, runtime)
@@ -140,7 +140,7 @@ describe('compaction cut anchoring', () => {
   it('records visible memory with reflection support ids intact', async () => {
     const events = [userMessageEvent(0, 'm1', 'one')]
     const { ctx, listeners } = fakeCtx(events)
-    const runtime = new OmRuntime(Config({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
     const observation = makeObservation({ content: 'evidence', sourceEventSeqs: [0] })
     const reflection = makeReflection('durable fact', [observation.id])
     await runtime.store.append('s1', { kind: 'observations-recorded', observations: [observation], coversUpToSeq: 0 })

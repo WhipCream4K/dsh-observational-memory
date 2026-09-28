@@ -67,9 +67,13 @@ export function registerConsolidationTrigger(ctx: Context, runtime: OmRuntime): 
     if (!isMemorySession(session)) return
     launch(ctx, runtime, session)
   })
-  ctx.on('agent/session-start', ({ agent }) => {
-    if (!isMemorySession(agent.session)) return
+  // A session that becomes live (open, resume, clear, or post-compaction
+  // re-entry) gets the same catch-up launch the turn/end trigger gives it.
+  // DSH 0.1.7 renamed `agent/session-start` to `agent/created`.
+  ctx.on('agent/created', ({ agent }) => {
+    if (!isMemorySession(agent.session)) return undefined
     launch(ctx, runtime, agent.session)
+    return undefined
   })
 }
 

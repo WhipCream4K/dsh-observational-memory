@@ -33,7 +33,9 @@ describe('runWorkerLoop', () => {
     const second = requests[1].messages as { role: string; content: { type: string; text?: string }[] }[]
     expect(second.at(-2)?.role).toBe('assistant')
     const toolResult = second.at(-1)
-    expect(toolResult?.role).toBe('user')
+    // DSH 0.1.7 gives a tool result its own role; the worker loop feeds it back
+    // as a first-class tool message rather than a user-role echo.
+    expect(toolResult?.role).toBe('tool')
     expect(JSON.stringify(toolResult?.content)).toContain('echo: hi')
   })
 

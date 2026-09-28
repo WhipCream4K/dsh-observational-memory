@@ -13,6 +13,18 @@ import type { WorkerModelTarget } from './workers/observer.ts'
 
 export type WorkerPhase = 'observer' | 'reflector' | 'dropper'
 
+/**
+ * Where the runtime reads its config from: a fixed config (tests, and any
+ * caller that owns the values) or a getter re-read on every access (the live
+ * settings-backed entry).
+ */
+export type ConfigSource = Config | (() => Config)
+
+/** Value comparison behind the live-config change detector. */
+function sameConfig(a: Config, b: Config): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 export type ResolveResult =
   | {
       ok: true
@@ -43,6 +55,9 @@ export function storageRoot(config: ResolvedConfig): string {
 
 export class OmRuntime {
   private _config: ResolvedConfig
+  /** Last plain config the snapshot was resolved from (live-change detector). */
+  private _raw: Config
+  private readonly source: () => Config
   private _store: LedgerStore
   private readonly onError: (message: string) => void
   private debugLog: DebugLog | undefined
@@ -74,31 +89,44 @@ export class OmRuntime {
   /** Consecutive deliberate-empty observer verdicts per session (warns from the 2nd on). */
   readonly observerConsecutiveEmpties = new Map<string, number>()
 
-  constructor(initialConfig: Config, hooks: { onError: (message: string) => void }) {
-    this._config = resolveConfig(initialConfig)
+  constructor(config: ConfigSource, hooks: { onError: (message: string) => void }) {
+    this.source = typeof config === 'function' ? config : () => config
+    this._raw = this.source()
+    this._config = resolveConfig(this._raw)
     this.onError = hooks.onError
     this._store = new LedgerStore(storageRoot(this._config), { onError: this.onError })
   }
 
-  /** Effective config: composition entry overlaid with user settings. */
+  /**
+   * Effective config: the live composition entry overlaid with user settings.
+   *
+   * The source is re-read on every access and the snapshot is re-resolved only
+   * when its values changed, so a settings-page edit lands on the next read
+   * without this plugin remounting. A real change starts a fresh worker-model
+   * epoch (failure streaks belong to the previous config) and re-roots the
+   * ledger store when `storageDir` moved.
+   */
   get config(): ResolvedConfig {
+    this.refresh()
     return this._config
   }
 
   get store(): LedgerStore {
+    this.refresh()
     return this._store
   }
 
-  /** Swap in a new effective config, re-rooting the store when it moved. */
-  setConfig(config: Config): void {
+  /** Re-resolve the snapshot when the live source changed since the last read. */
+  private refresh(): void {
+    const next = this.source()
+    // A constant source always hands back the same object: nothing to compare.
+    if (next === this._raw || sameConfig(next, this._raw)) return
     const previousRoot = storageRoot(this._config)
-    const next = resolveConfig(config)
-    const nextRoot = storageRoot(next)
-    this._config = next
-    // A config change re-arms the worker-model override: failure streaks and
-    // suspension notices belong to the previous config epoch.
+    this._raw = next
+    this._config = resolveConfig(next)
     this.workerConsecutiveFailures.clear()
     this.overrideSuspensionNotified.clear()
+    const nextRoot = storageRoot(this._config)
     if (nextRoot !== previousRoot) {
       this._store = new LedgerStore(nextRoot, { onError: this.onError })
     }
@@ -109,8 +137,8 @@ export class OmRuntime {
    * The streak is always counted (it backs the error debug events and worker
    * notifications, so it stays meaningful without an override); it only FEEDS
    * override suspension while an override is configured. A later override
-   * adoption passes through setConfig, which starts a fresh config epoch and
-   * clears any streak earned on the session model.
+   * adoption passes through a config change, which starts a fresh config epoch
+   * and clears any streak earned on the session model.
    */
   recordStageError(sessionId: string, phase: WorkerPhase, error: unknown): { message: string; consecutiveFailures: number } {
     const message = error instanceof Error ? error.message : String(error)
@@ -130,7 +158,7 @@ export class OmRuntime {
    * the streak (and the suspension) untouched.
    */
   noteWorkerSuccess(sessionId: string, viaOverride: boolean): void {
-    if (!viaOverride && this._config.model !== undefined) return
+    if (!viaOverride && this.config.model !== undefined) return
     this.workerConsecutiveFailures.delete(sessionId)
     this.overrideSuspensionNotified.delete(sessionId)
   }
@@ -149,8 +177,9 @@ export class OmRuntime {
 
   /** Write one debug event when `debugLog` is enabled; otherwise a no-op. */
   debug(sessionId: string, event: string, data: Record<string, unknown> = {}): void {
-    if (!this._config.debugLog) return
-    const root = storageRoot(this._config)
+    const config = this.config
+    if (!config.debugLog) return
+    const root = storageRoot(config)
     if (!this.debugLog || this.debugLogRoot !== root) {
       this.debugLog = new DebugLog(root, this.onError)
       this.debugLogRoot = root
@@ -235,7 +264,7 @@ export class OmRuntime {
           await this._store.append(sessionId, entry)
         }
         this.debug(sessionId, 'ledger.inherited', { from: ancestorId, records: inherited.length, throughSeq: boundary })
-        if (this._config.showWorkerNotifications) {
+        if (this.config.showWorkerNotifications) {
           ctx.logger.info(
             `[observational-memory] session inherited ${inherited.length} memory record(s) from ${ancestorId} (through seq ${boundary})`,
           )
@@ -278,7 +307,10 @@ export class OmRuntime {
    * selection.
    */
   async resolveModel(ctx: Context, session: Session, agent: Agent | undefined): Promise<ResolveResult> {
-    const configured = this._config.model
+    // One snapshot for the whole resolution: a settings edit landing mid-call
+    // must not split the override decision across two config epochs.
+    const config = this.config
+    const configured = config.model
     const routed = session.requestHeader()?.config
     const fallback =
       routed && routed.provider.length > 0 && routed.model.length > 0
@@ -292,7 +324,7 @@ export class OmRuntime {
     // offered and the session/default model takes over (0 disables the
     // mechanism). Sticky within the config epoch: only an override-path
     // success, a config change, or a session reload re-arms it.
-    const threshold = this._config.modelFallbackAfterFailures
+    const threshold = config.modelFallbackAfterFailures
     const suspended =
       configured !== undefined
       && threshold > 0

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { Config } from '../src/config.ts'
+import { Config, resolveConfig } from '../src/config.ts'
 import { registerCompactionHook } from '../src/hooks/compaction.ts'
 import { OmRuntime } from '../src/runtime.ts'
 import { makeObservation, makeReflection } from './fixtures.ts'
@@ -69,7 +69,7 @@ describe('compaction hook', () => {
   it('renders memory as the compaction summary without a model call', async () => {
     const { ctx, listeners } = fakeCtx([])
     // Tiny pool max forces a full fold so reflections join observations.
-    const runtime = new OmRuntime(Config({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
     const observation = makeObservation({ id: 'd4e5f6a1b2c3', content: 'User decided to switch to GraphQL.' })
     const reflection = makeReflection('The public API uses GraphQL.', [observation.id])
     await runtime.store.append('s1', { kind: 'observations-recorded', observations: [observation], coversUpToSeq: 3 })
@@ -100,7 +100,7 @@ describe('compaction hook', () => {
 
   it('records visible memory when the compaction commits', async () => {
     const { ctx, listeners } = fakeCtx([])
-    const runtime = new OmRuntime(Config({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir, observationsPoolMaxTokens: 1 }), { onError: () => {} })
     const observation = makeObservation({ content: 'kept observation' })
     await runtime.store.append('s1', { kind: 'observations-recorded', observations: [observation], coversUpToSeq: 3 })
     registerCompactionHook(ctx, runtime)
@@ -122,7 +122,7 @@ describe('compaction hook', () => {
 
   it('delegates to the native summarizer when memory is empty', async () => {
     const { ctx, listeners } = fakeCtx([])
-    const runtime = new OmRuntime(Config({ storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir }), { onError: () => {} })
     registerCompactionHook(ctx, runtime)
 
     const waterfall = listeners.get('llm/stream')![0]
@@ -138,7 +138,7 @@ describe('compaction hook', () => {
 
   it('ignores non-compaction calls', async () => {
     const { ctx, listeners } = fakeCtx([])
-    const runtime = new OmRuntime(Config({ storageDir: dir }), { onError: () => {} })
+    const runtime = new OmRuntime(resolveConfig({ storageDir: dir }), { onError: () => {} })
     registerCompactionHook(ctx, runtime)
     const waterfall = listeners.get('llm/stream')![0]
     const options = { ...compactionOptions('s1'), purpose: undefined }

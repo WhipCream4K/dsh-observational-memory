@@ -20,7 +20,7 @@
 - **recall 工具**：模型可凭记忆 id 精确恢复任意观察/反思背后的原始会话证据（带时间戳的原文）。
 - **记忆选项卡**：对话视图环新增「记忆」页，实时展示记忆清单、worker 进度、记忆内容（可见/完整）与调试日志。
 - **回退按钮**：每条用户消息下新增「回退」，一键在消息前分叉会话并把原文放回输入框。
-- **双语设置卡片**：「设置 → 插件 → 插件配置」中的 Observational Memory 卡片支持中/英文，模型覆盖从 DSH 已添加的模型列表按 提供商 → 模型 → 推理强度 级联选择。
+- **双语设置卡片**：**插件**页面中该插件页上的 Observational Memory 配置区支持中/英文，模型覆盖从 DSH 已添加的模型列表按 提供商 → 模型 → 推理强度 级联选择。
 
 ## 核心概念
 
@@ -57,7 +57,7 @@ flowchart TD
 
 ## 安装
 
-要求：deepseek-harness **0.1.5-rc.2**（`@deepseek-ai/dsh-*` 包 ≥ 0.1.5-rc.2）。
+要求：deepseek-harness **0.1.7-rc.2**（`@deepseek-ai/dsh-*` 包 ≥ 0.1.7-rc.2）。0.1.7 换掉了本插件原先使用的客户端设置 API（`settingsScope` → `configForms`、`settings.plugin.item` → `plugins.bundle.config`），host 侧的自有页面声明改为 `settings.configure({ auto: false })`；新旧版本不能混用。
 
 通过 DSH CLI 把插件加入指定的 Profile（这里以 `web` 为例，按需替换）。本包自带 `cordis.patch.yml`，组合器会自动挂载 host 半端，并向 Web 客户端提供 `/plugins/dsh-observational-memory/client.js`——安装后无需额外的组合配置。
 
@@ -100,7 +100,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-observational-memory
 
 ### 设置卡片
 
-打开 **设置 → 插件 → 插件配置**，最底部的 **Observational Memory** 卡片，点击展开后编辑，**保存**即时生效（无需重启）。卡片支持中/英双语，跟随 DSH 的语言设置。
+打开侧栏旁的**插件**页面，进入 **dsh-observational-memory** 插件页，展开其中的配置区编辑，**保存**即时生效（无需重启）。卡片支持中/英双语，跟随 DSH 的语言设置。
 
 - **阈值区**：「压缩阈值模式」决定只显示哪个阈值参数——`calibrated` 显示「主动压缩阈值」，`ratio` 显示「压缩阈值比例」；只有显示的参数有效，隐藏的参数无论设成多少都不生效。
 - **模型（可选）区**：「提供商 → 模型 ID → 推理强度」三级下拉，选项来自 DSH 已添加的模型列表；前者未选择时后者的下拉框为空。全部留空则记忆 worker 跟随会话当前模型。
@@ -132,10 +132,10 @@ DSH 只能按轮次边界切分会话，因此按钮在以下情况保持禁用�
 
 ## 配置
 
-配置位于 DSH 用户设置文档的独立命名空间 `observational-memory`（默认 `$DSH_HOME/settings.yaml`），与 DSH 本体配置完全隔离。两种改法：
+配置位于当前 Profile 的补丁文件（`$DSH_HOME/profiles/<profile>/cordis.patch.yml`）中 `observational-memory` 条目的 `config:`，叠加在本包自带的默认值之上，与 DSH 本体配置完全隔离。两种改法：
 
 1. **界面**：见上文「设置卡片」。
-2. **手改文件**：编辑 `$DSH_HOME/settings.yaml` 的 `observational-memory:` 段。
+2. **手改文件**：直接编辑该 Profile 补丁里 `observational-memory` 条目的 `config:`。0.1.7 之前的 `settings.yaml` 会被自动导入一次，随后保留为 `settings.yaml.imported`。
 
 ### 配置项
 

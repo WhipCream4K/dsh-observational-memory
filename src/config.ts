@@ -1,16 +1,17 @@
 /**
  * Plugin configuration: one Schemastery schema shared by the cordis
  * composition entry (`config:` in cordis.yml) and the user-editable settings
- * namespace `observational-memory` (Settings → Plugins → Plugin
- * configuration). The namespace keeps user overrides in the DSH user settings
- * document under their own top-level key — the harness's own composition is
- * never touched.
+ * page for the `observational-memory` entry (Settings → Plugins). Every field
+ * is declared `.volatile()`, so the Loader keeps a stable reference per field
+ * and the settings page can edit them live; {@link readConfig} reads the
+ * current plain values back out of those references.
  *
  * Following the harness idiom, {@link Config} is the schema INPUT type (all
  * fields optional); {@link resolveConfig} applies schema defaults to produce
  * the {@link ResolvedConfig} the runtime consumes.
  */
 import z from '@deepseek-ai/schemastery'
+import { isVolatile, type Volatile } from '@deepseek-ai/cosmokit'
 
 export const SETTINGS_NAMESPACE = 'observational-memory'
 
@@ -119,40 +120,72 @@ export interface ResolvedConfig {
   storageDir?: string
 }
 
+/**
+ * The Loader-supplied config: every field is a stable reference whose current
+ * value the Loader updates in place when the settings page writes. Keep the
+ * reference; read `.get()` for one operation.
+ */
+export type ConfigRefs = { readonly [K in keyof Required<Config>]: Volatile<Config[K]> }
+
 const modelSchema = z.object({
   provider: z.string().required(),
   id: z.string().required(),
   reasoningEffort: z.string(),
 })
 
-export const Config: z<Config> = z.object({
-  observeAfterTokens: z.number().step(1).min(1).default(10_000),
-  reflectAfterTokens: z.number().step(1).min(1).default(20_000),
-  modelFallbackAfterFailures: z.number().step(1).min(0).default(0),
-  observerChunkMaxTokens: z.number().step(1).min(256),
-  compactAfterTokens: z.number().step(1).min(0).default(0),
-  compactAfterTokensMode: z.union(['calibrated', 'ratio'] as const).default('calibrated'),
+export const Config = z.object({
+  observeAfterTokens: z.number().step(1).min(1).default(10_000).volatile(),
+  reflectAfterTokens: z.number().step(1).min(1).default(20_000).volatile(),
+  modelFallbackAfterFailures: z.number().step(1).min(0).default(0).volatile(),
+  observerChunkMaxTokens: z.number().step(1).min(256).volatile(),
+  compactAfterTokens: z.number().step(1).min(0).default(0).volatile(),
+  compactAfterTokensMode: z.union(['calibrated', 'ratio'] as const).default('calibrated').volatile(),
   // The schema bounds are inclusive; the resolver additionally rejects the
   // endpoints (a ratio of 0 never triggers, 1 leaves no room for a response).
-  compactAfterTokensRatio: z.number().min(0).max(1).default(0.68),
-  observationsPoolMaxTokens: z.number().step(1).min(1).default(20_000),
-  observationsPoolTargetTokens: z.number().step(1).min(1),
-  agentMaxTurns: z.number().step(1).min(1).default(16),
+  compactAfterTokensRatio: z.number().min(0).max(1).default(0.68).volatile(),
+  observationsPoolMaxTokens: z.number().step(1).min(1).default(20_000).volatile(),
+  observationsPoolTargetTokens: z.number().step(1).min(1).volatile(),
+  agentMaxTurns: z.number().step(1).min(1).default(16).volatile(),
   // An absent model override must stay absent: schemastery objects resolve
   // even when the key is missing, so an `undefined` default marks it optional
   // (cast: `default(value: T)` predates optional objects).
-  model: modelSchema.default(undefined as never),
-  showWorkerNotifications: z.boolean().default(true),
-  passive: z.boolean().default(false),
-  debugLog: z.boolean().default(false),
-  storageDir: z.string(),
+  model: modelSchema.default(undefined as never).volatile(),
+  showWorkerNotifications: z.boolean().default(true).volatile(),
+  passive: z.boolean().default(false).volatile(),
+  debugLog: z.boolean().default(false).volatile(),
+  storageDir: z.string().volatile(),
 })
+
+/**
+ * Read the current plain values out of the Loader's field references. The
+ * settings page writes through the Loader, so a fresh read here sees an edit
+ * without this plugin remounting.
+ */
+export function readConfig(config: ConfigRefs): Config {
+  const plain: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(config)) {
+    plain[key] = isVolatile(value) ? value.get() : value
+  }
+  return plain as Config
+}
+
+/** Unwrap the volatile references a schema call wraps resolved fields in. */
+function unwrapVolatile(value: unknown): unknown {
+  if (isVolatile(value)) return unwrapVolatile(value.get())
+  if (Array.isArray(value)) return value.map(unwrapVolatile)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, unwrapVolatile(child)]),
+    )
+  }
+  return value
+}
 
 /** Apply schema defaults to a partial composition/settings value. */
 export function resolveConfig(config: Config): ResolvedConfig {
-  // The schema value resolves defaults at runtime; the z<Config> typing names
-  // the input shape, so the cast projects to the resolved shape.
-  return Config(config) as ResolvedConfig
+  // The schema parses volatile fields into fresh references; the runtime
+  // consumes plain values, so the resolved form is unwrapped here.
+  return unwrapVolatile(Config(config)) as ResolvedConfig
 }
 
 /**
