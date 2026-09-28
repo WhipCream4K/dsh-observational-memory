@@ -1,10 +1,23 @@
 /**
  * dsh-observational-memory — browser half.
  *
- * Registers the plugin's bilingual dictionaries, one expandable card under
- * Settings → Plugins → Plugin configuration (keyed by the `observational-memory`
- * settings namespace the host half serves), and the Memory conversation view
- * tab right of the Trajectory tab, fed by the host's Typert Remote endpoints.
+ * Three independent features, each bound only when the services it actually
+ * needs exist:
+ *  - the bilingual dictionaries (the platform `locale` service),
+ *  - the configuration card on this bundle's page under Plugins
+ *    (`configForms`, keyed by the `observational-memory` settings entry the host
+ *    half serves, with the model catalog over the Connection RPC),
+ *  - the Memory conversation view tab (`connection`), and the rollback-enabled
+ *    user message renderers (`sessions` + `conversation` + `uiWorkspace`).
+ *
+ * Only the platform core (`slots`, `locale`) is declared in `inject`, because
+ * a service named there is a hard gate: the client module runner awaits every
+ * entry's fiber during boot, so a service this harness build no longer provides
+ * would leave the page waiting instead of painting. Feature services are
+ * resolved through optional child fibers, which is what makes a renamed service
+ * cost one feature rather than the whole chat.
+ *
+ * @module dsh-observational-memory/client
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { ReactNode } from 'react'
@@ -17,10 +30,23 @@ import type { RollbackEventView } from './rollback.ts'
 import { OmUserMessageNodeView, type RollbackInjected } from './user-message.tsx'
 
 export const name = 'dsh-observational-memory-ui'
-export const inject = ['slots', 'locale', 'configForms', 'connection', 'sessions', 'conversation', 'uiWorkspace']
+
+/**
+ * Platform core only. Every feature service is resolved through
+ * {@link optionalFeature}, so no renamed or absent feature service can keep
+ * this entry's fiber pending and stall the client boot.
+ */
+export const inject = ['slots', 'locale']
 
 /** The settings namespace joining the host half and this card. */
 const NS = LOCALE_NAMESPACE
+
+/**
+ * How long a feature waits for its services before saying so. Long enough that
+ * a healthy boot never trips it (services arrive with the shell), short enough
+ * to beat a user noticing a missing card and wondering why.
+ */
+export const CAPABILITY_GRACE_MS = 10_000
 
 interface LocaleService {
   register(ns: string, dicts: Record<string, Record<string, string>>): () => void
@@ -114,6 +140,52 @@ interface MemoryInjected {
   setViewMode: (mode: MemoryViewMode) => void
 }
 
+/** Report one degraded or failed feature without taking anything else down. */
+function reportCapability(feature: string, detail: string): void {
+  console.warn(`[observational-memory] ${feature} unavailable: ${detail}`)
+}
+
+/**
+ * Bind one feature block once its services exist, without requiring them.
+ *
+ * `bind` runs in a child fiber once every name in `deps` is provided, so the
+ * entry itself loads immediately on any harness build. When the services never
+ * arrive, one late check names the missing capability instead of leaving a
+ * silent gap; a `bind` that throws (a changed registration option shape, say)
+ * is contained to this block.
+ *
+ * @param ctx - the plugin context.
+ * @param deps - services this block cannot work without.
+ * @param feature - feature name used in diagnostics.
+ * @param bind - the block's body, run with the child context.
+ */
+function optionalFeature(
+  ctx: Context,
+  deps: readonly string[],
+  feature: string,
+  bind: (scope: Context) => void,
+): void {
+  let settled = false
+  ctx.inject([...deps], (scope: Context) => {
+    settled = true
+    try {
+      bind(scope)
+    } catch (error) {
+      reportCapability(feature, `registration failed (${error instanceof Error ? error.message : String(error)})`)
+    }
+  })
+  ctx.effect(() => {
+    const timer = setTimeout(() => {
+      if (settled) return
+      const missing = deps.filter((name) => ctx.get(name) === undefined)
+      reportCapability(feature, missing.length > 0
+        ? `${missing.join(', ')} is not provided by this DeepSeek Harness build`
+        : `${deps.join(', ')} never became available`)
+    }, CAPABILITY_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, `observational-memory: ${feature} diagnostic`)
+}
+
 export function apply(ctx: Context): void {
   // Bilingual dictionaries; the locale service follows the DSH language
   // setting and re-renders locale-declaring slot entries on switch.
@@ -122,127 +194,153 @@ export function apply(ctx: Context): void {
   // Bound translator shared by the tab label thunk and rollback notices.
   const t = ctx.locale.bind(NS)
 
-  // Both services are declared by the shipped client packages with shapes this
-  // bundle does not want to merge against, so they are resolved structurally
-  // (the same treatment `sessions` gets below); `inject` guarantees presence.
-  const configForms = ctx.get('configForms') as unknown as ConfigFormsLike
-  const uiWorkspace = ctx.get('uiWorkspace') as unknown as UiWorkspaceLike
+  registerSettingsCard(ctx)
+  registerMemoryView(ctx, t)
+  registerRollbackRenderers(ctx, t)
+}
 
-  // The settings card edits the entry's volatile fields and lists the Host
-  // model catalog (session/modelCatalog over the Connection RPC channel) in
-  // its provider → model → reasoning-effort dropdowns.
-  const controller = new OmCardController(configForms.get(NS), CARD_FIELDS, ctx.connection.rpc)
-  ctx.effect(() => () => controller.dispose(), 'observational-memory: card form subscription')
+/**
+ * The configuration card on this bundle's page under Plugins.
+ * `plugins.bundle.config` is keyed by package name and rendered `view: 'page'`
+ * only; `plugins.item` is reserved for the shipped companion pages. The
+ * `whileServed` guard keeps the registration alive only while the Host serves
+ * this entry's settings namespace.
+ */
+function registerSettingsCard(ctx: Context): void {
+  optionalFeature(ctx, ['configForms'], 'settings card', (scope) => {
+    const configForms = scope.get('configForms') as unknown as ConfigFormsLike
+    // The model catalog is the card's only use of the RPC channel, so a missing
+    // connection costs the dropdowns, not the card.
+    const rpc = (scope.get('connection') as ConnectionService | undefined)?.rpc
+    const controller = new OmCardController(configForms.get(NS), CARD_FIELDS, rpc)
+    scope.effect(() => () => controller.dispose(), 'observational-memory: card form subscription')
 
-  // The configuration seat on this bundle's own page in Settings → Plugins.
-  // `plugins.bundle.config` is keyed by package name and rendered `view: 'page'`
-  // only; `plugins.item` is reserved for the shipped companion pages. The
-  // `whileServed` guard keeps the registration alive only while the Host serves
-  // this entry's settings namespace.
-  ctx.effect(
-    () => configForms.whileServed([NS], () =>
-      ctx.slots.inject('plugins.bundle.config', () =>
-        ctx.slots.register(
-          {
-            name: 'plugins.bundle.config',
-            key: 'dsh-observational-memory',
-            locale: NS,
-            inject: () => controller.inject() as unknown as Record<string, unknown>,
-          },
-          ObservationalMemoryCard as never,
+    scope.effect(
+      () => configForms.whileServed([NS], () =>
+        scope.slots.inject('plugins.bundle.config', () =>
+          scope.slots.register(
+            {
+              name: 'plugins.bundle.config',
+              key: 'dsh-observational-memory',
+              locale: NS,
+              inject: () => controller.inject() as unknown as Record<string, unknown>,
+            },
+            ObservationalMemoryCard as never,
+          ),
         ),
       ),
-    ),
-    'observational-memory: settings page',
-  )
-
-  // Rollback-enabled user message renderers. `conversation.chat.node` has no
-  // additive seam for user-message actions, so the keyed `user`/`steering`
-  // renderers are replaced while this plugin is loaded; the built-ins return
-  // on unload.
-  const sessions = ctx.get('sessions') as unknown as SessionsService
-  const composerNotice = (sessionId: string, level: 'info' | 'error', text: string): void => {
-    const scope = sessions.scope(sessionId)
-    if (scope !== undefined) ctx.conversation.input.for(scope).notify(level, text)
-  }
-  const rollbackInject = (sessionId: string): RollbackInjected => ({
-    rollbackWindow: () => {
-      const snapshot = sessions.binding(sessionId)?.eventSource.getSnapshot()
-      return {
-        entries: snapshot?.entries.map((entry) => entry.event) ?? [],
-        hasMore: snapshot?.hasMore ?? false,
-      }
-    },
-    rollback: (anchorSeq, text) => {
-      void sessions
-        .fork({ sessionId, atSeq: anchorSeq, increaseTitle: true })
-        .then((childId) => {
-          // Seed the draft BEFORE opening so the child's composer adopts it on
-          // mount (the draft mirror adopts on bind).
-          const scope = sessions.scope(childId)
-          if (scope !== undefined) ctx.conversation.input.for(scope).setDraft(text)
-          uiWorkspace.openSession(childId)
-        })
-        .catch(() => {
-          // Fork or child-title failure leaves the source view unchanged; say
-          // so on the source session's composer instead of failing silently.
-          composerNotice(sessionId, 'error', t('message.rollbackFailed'))
-        })
-    },
-    notifyRollbackBlocked: () => composerNotice(sessionId, 'info', t('message.rollbackBlocked')),
+      'observational-memory: settings page',
+    )
   })
-  ctx.slots.inject('conversation.chat.node', () => {
-    // Same-key replacement requires a distinct priority; the lowest value
-    // renders, so -1 shadows the built-in renderer (priority 0) while loaded.
-    // A priority clash with another shadowing plugin must not take down this
-    // plugin's unrelated registrations, so each register is guarded.
-    const disposers: (() => void)[] = []
-    for (const key of ['user', 'steering'] as const) {
-      try {
-        disposers.push(ctx.slots.register(
-          { name: 'conversation.chat.node', key, locale: NS, priority: -1, inject: rollbackInject as never },
-          OmUserMessageNodeView as never,
-        ))
-      } catch (error) {
-        console.warn('[observational-memory] failed to register the rollback-enabled renderer for chat node "%s": %s', key, String(error))
-      }
-    }
-    return disposers
-  })
+}
 
-  // Memory view tab: one controller per session, built on first render of the
-  // tab's inject face and reused across remounts (view switches). Controllers
-  // for sessions removed from the list are evicted with it.
-  const memoryControllers = new Map<string, OmMemoryController>()
-  ctx.effect(() => sessions.list.subscribe(() => {
-    const listed = sessions.list.getSnapshot().byId
-    for (const id of [...memoryControllers.keys()]) {
-      if (!(id in listed)) memoryControllers.delete(id)
+/**
+ * The Memory conversation view tab: one controller per session, built on first
+ * render of the tab's inject face and reused across remounts (view switches).
+ * Controllers for sessions removed from the list are evicted when the client
+ * session list is available.
+ */
+function registerMemoryView(ctx: Context, t: (key: string) => string): void {
+  optionalFeature(ctx, ['connection'], 'Memory tab', (scope) => {
+    const rpc = (scope.get('connection') as ConnectionService).rpc
+    const sessions = scope.get('sessions') as unknown as SessionsService | undefined
+
+    const memoryControllers = new Map<string, OmMemoryController>()
+    if (sessions !== undefined) {
+      scope.effect(() => sessions.list.subscribe(() => {
+        const listed = sessions.list.getSnapshot().byId
+        for (const id of [...memoryControllers.keys()]) {
+          if (!(id in listed)) memoryControllers.delete(id)
+        }
+      }), 'observational-memory: memory controller eviction')
     }
-  }), 'observational-memory: memory controller eviction')
-  ctx.slots.inject('conversation.view', () =>
-    ctx.slots.register(
-      {
-        name: 'conversation.view',
-        id: 'memory',
-        order: 20,
-        locale: NS,
-        label: () => t('view.memory'),
-        inject: ((sessionId: string): MemoryInjected => {
-          let memory = memoryControllers.get(sessionId)
-          if (memory === undefined) {
-            memory = new OmMemoryController(ctx.connection.rpc, sessionId)
-            memoryControllers.set(sessionId, memory)
-          }
-          return {
-            hooks: { memory },
-            refresh: () => void memory.refresh(),
-            run: () => void memory.run(),
-            setViewMode: (mode) => void memory.setViewMode(mode),
-          }
-        }) as never,
+
+    scope.slots.inject('conversation.view', () =>
+      scope.slots.register(
+        {
+          name: 'conversation.view',
+          id: 'memory',
+          order: 20,
+          locale: NS,
+          label: () => t('view.memory'),
+          inject: ((sessionId: string): MemoryInjected => {
+            let memory = memoryControllers.get(sessionId)
+            if (memory === undefined) {
+              memory = new OmMemoryController(rpc, sessionId)
+              memoryControllers.set(sessionId, memory)
+            }
+            return {
+              hooks: { memory },
+              refresh: () => void memory.refresh(),
+              run: () => void memory.run(),
+              setViewMode: (mode) => void memory.setViewMode(mode),
+            }
+          }) as never,
+        },
+        MemoryView as never,
+      ),
+    )
+  })
+}
+
+/**
+ * Rollback-enabled user message renderers. `conversation.chat.node` has no
+ * additive seam for user-message actions, so the keyed `user`/`steering`
+ * renderers are replaced while this plugin is loaded; the built-ins return on
+ * unload. Each key's register is guarded so a priority clash with another
+ * shadowing plugin cannot take the sibling key down.
+ */
+function registerRollbackRenderers(ctx: Context, t: (key: string) => string): void {
+  optionalFeature(ctx, ['sessions', 'conversation', 'uiWorkspace'], 'rollback button', (scope) => {
+    const sessions = scope.get('sessions') as unknown as SessionsService
+    const uiWorkspace = scope.get('uiWorkspace') as unknown as UiWorkspaceLike
+
+    const composerNotice = (sessionId: string, level: 'info' | 'error', text: string): void => {
+      const target = sessions.scope(sessionId)
+      if (target !== undefined) scope.conversation.input.for(target).notify(level, text)
+    }
+    const rollbackInject = (sessionId: string): RollbackInjected => ({
+      rollbackWindow: () => {
+        const snapshot = sessions.binding(sessionId)?.eventSource.getSnapshot()
+        return {
+          entries: snapshot?.entries.map((entry) => entry.event) ?? [],
+          hasMore: snapshot?.hasMore ?? false,
+        }
       },
-      MemoryView as never,
-    ),
-  )
+      rollback: (anchorSeq, text) => {
+        void sessions
+          .fork({ sessionId, atSeq: anchorSeq, increaseTitle: true })
+          .then((childId) => {
+            // Seed the draft BEFORE opening so the child's composer adopts it on
+            // mount (the draft mirror adopts on bind).
+            const target = sessions.scope(childId)
+            if (target !== undefined) scope.conversation.input.for(target).setDraft(text)
+            uiWorkspace.openSession(childId)
+          })
+          .catch(() => {
+            // Fork or child-title failure leaves the source view unchanged; say
+            // so on the source session's composer instead of failing silently.
+            composerNotice(sessionId, 'error', t('message.rollbackFailed'))
+          })
+      },
+      notifyRollbackBlocked: () => composerNotice(sessionId, 'info', t('message.rollbackBlocked')),
+    })
+
+    scope.slots.inject('conversation.chat.node', () => {
+      // Same-key replacement requires a distinct priority; the lowest value
+      // renders, so -1 shadows the built-in renderer (priority 0) while loaded.
+      const disposers: (() => void)[] = []
+      for (const key of ['user', 'steering'] as const) {
+        try {
+          disposers.push(scope.slots.register(
+            { name: 'conversation.chat.node', key, locale: NS, priority: -1, inject: rollbackInject as never },
+            OmUserMessageNodeView as never,
+          ))
+        } catch (error) {
+          reportCapability(`rollback-enabled renderer for chat node "${key}"`, String(error))
+        }
+      }
+      return disposers
+    })
+  })
 }
